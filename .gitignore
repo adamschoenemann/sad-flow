@@ -1,0 +1,4 @@
+**/*.class
+*.svg
+*.dot
+target
