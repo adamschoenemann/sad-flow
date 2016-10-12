@@ -4,23 +4,39 @@ import collection.immutable.Queue
 
 object Main {
 
+  def testNetwork = {
+    val nodes = "s,a,b,c,d,e,f,g,t".split(",")
+        .zipWithIndex.map(t => Node(t._2, t._1))
+        .toIndexedSeq
+
+    val edges = List(
+      (0,1,12),(0,2,15),(0,3,20),(1,5,5),(1,6,2),(1,2,5),(2,3,11),(2,4,3),(2,6,6),
+      (3,4,4),(3,7,8), (4,6,6),(4,7,1),(5,8,18),(5,6,9),(6,7,7),(6,8,13),(7,8,10)
+    ).zipWithIndex.map({ case ((f,t,c),i) => UndEdge(i,f,t,c)})
+
+    Network(nodes, edges)
+  }
 
   def main(args:Array[String]):Unit = {
 
     val Some(network) = parseNetwork("./data/rail.txt")
     val residual = network.toResidual
-    val Some(path) = network.bfs(network.sourceId, network.sinkId)
-    val Some(path2) = residual.bfs(residual.sourceId, residual.sinkId)
-
-    val maxFlowNw = FlowNetwork.maxFlow(network)
-    println("Final flow: " + maxFlowNw.flow)
+    val Some(path) = residual.bfs(residual.sourceId, residual.sinkId)
+    val maxFlowNw = FlowNetwork.maxFlow(network, 100)
+    new PrintWriter("graph.dot") {
+      write(maxFlowNw.toGraphViz("graph")); close
+    }
+    new PrintWriter("residual.dot") {
+      write(maxFlowNw.toResidual.toGraphViz("digraph")); close
+    }
+    println(maxFlowNw.flow.map)
+    println("max flow: " + maxFlowNw.flow.value)
     val reachable = maxFlowNw.toResidual.reachableFrom(maxFlowNw.sourceId)
     // println(reachable)
     val mincut = STCut(reachable, maxFlowNw.nodes.diff(reachable), maxFlowNw.toResidual)
     val edges = mincut.edgesOnCut
-    println(edges.map(e => s"${e.from} ${e.to} ${e.capacity}").mkString("\n"))
-    // println(path2string(path2, residual))
-    new PrintWriter("graph.dot") { write(maxFlowNw.toGraphViz); close }
+    println(edges.sortBy(_.to).map(e => s"${e.to} ${e.from} ${e.capacity}").mkString("\n"))
+
   }
 
   type Path = List[Edge]
@@ -72,6 +88,30 @@ object Main {
     path.filter(_.hasFiniteCapacity).map(e => e.capacity - e.flow).min
   }
 
+  case class Flow(map:Map[(Int,Int), Int] = Map()) {
+
+    def value(ida:Int, idb:Int):Int = {
+      map.get((ida,idb)).getOrElse(0)
+    }
+
+    map.foreach({case ((a,b),v) => assert (-v == map((b,a)))})
+
+    def value:Int = flowOut(0).map(_._2).sum
+
+    def updated(ida:Int, idb:Int, flow:Int):Flow = {
+      val flowNow = value(ida, idb)
+      val map2 = map.updated((ida, idb), flowNow + flow) // increase flow
+      val map3 = map2.updated((idb, ida), -map2((ida, idb))) // decrease flow in other dir
+      copy(map = map3)
+    }
+
+    def flowOut(id:Int) = map.keys.filter(_._1 == id).map(k => (k,map(k)))
+      .filter(_._2 > 0)
+
+    def flowIn(id:Int) = map.keys.filter(_._2 == id).map(k => (k,map(k)))
+      .filter(_._2 > 0)
+  }
+
   trait Graph {
 
     val nodes:Seq[Node]
@@ -81,8 +121,6 @@ object Main {
     def edge(index:Int) = edges(index)
     def edgesFrom(nodeId:Int) = edges.filter(_.from == nodeId)
     def edgesTo(nodeId:Int) = edges.filter(_.to == nodeId)
-    def edgesAsDirected(nodeId:Int) =
-      (edgesFrom(nodeId) ++ edgesTo(nodeId)).flatMap(_.asDirected)
 
     def reachableFrom(startId:Int) =
       traverseFrom[List[Node]](startId) (Nil) ((acc, n) => n :: acc)
@@ -100,7 +138,7 @@ object Main {
           } else {
             val acc2 = f(acc, current)
             val neighbours =
-              edgesAsDirected(current.id).map(e => node(e.to))
+              edgesFrom(current.id).map(e => node(e.to))
 
             helper(queue2 ++ neighbours, acc2, explored + current.id)
           }
@@ -131,7 +169,7 @@ object Main {
           } else {
             // filter is not necessary, but speeds up a little bit (in theory)
             val neighbours =
-              edgesAsDirected(current.id).filter(e => !explored.contains(e.to))
+              edgesFrom(current.id)
 
             val newPaths = neighbours.map(_ :: path)
             helper(queue2 ++ newPaths, explored + current.id, goal)
@@ -142,50 +180,39 @@ object Main {
       if (start.id == goal.id) {
         Some(List())
       } else {
-        val paths = edgesAsDirected(start.id).map(List(_))
+        val paths = edgesFrom(start.id).map(List(_))
         helper(Queue(paths: _*), Set(), goal)
       }
     }
 
-    lazy val toGraphViz:String = {
-      def e2s(e:Edge):String = e match {
-        case UndEdge(id, from, to, cap, flow) if flow > 0 => {
-          val color = if (flow > 0) "green" else "black"
-          s"""$from -> $to [label="$flow/$cap", color=$color, dir="both"]"""
-        }
-        case b@BEdge(_) => {
-          s"${b.from} -> ${b.to} [label=${b.capacity}, style=dashed]"
-        }
-        case _ => ""
-      }
-      val nodesStr = nodes.map(n => n.id + " [label=\"" + n.label + "\"]").mkString("\n")
-      val edgesStr = edges
-        .map(e2s(_))
-        .mkString("\n")
+  }
 
-      s"""digraph Network {
-        rankdir=LR
-        splines=true
-        overlap=false
-        ${nodesStr}
-        ${edgesStr}}
-      """
-    }
+  trait UndGraph extends Graph {
+
+    override def edgesFrom(nid:Int) = super.edgesFrom(nid) ++
+      super.edgesTo(nid).map(_.reverse)
+
+    override def edgesTo(nid:Int) = super.edgesTo(nid) ++
+      super.edgesFrom(nid).map(_.reverse)
   }
 
   object FlowNetwork {
 
     @annotation.tailrec
-    def maxFlow(nw:Network):Network = {
-      nw.assertValid()
-      val residual = nw.toResidual
-      residual.assertValid()
-      val pathOpt = residual.bfs(residual.sourceId, residual.sinkId)
-      pathOpt match {
-        case None => nw
-        case Some(path) => {
-          val nw2 = residual.augment(path, nw)
-          maxFlow(nw2)
+    def maxFlow(nw:Network, c:Int = 1000):Network = {
+      if (c <= 0) {
+        nw
+      } else {
+        nw.assertValid()
+        val residual = nw.toResidual
+        residual.assertValid()
+        val pathOpt = residual.bfs(residual.sourceId, residual.sinkId)
+        pathOpt match {
+          case None => nw
+          case Some(path) => {
+            val nw2 = residual.augment(path, nw)
+            maxFlow(nw2, c - 1)
+          }
         }
       }
     }
@@ -199,48 +226,125 @@ object Main {
     lazy val sourceId = source.id
     lazy val sinkId = sink.id
 
-    lazy val flow = edgesTo(sinkId).map(_.flow).sum
+    val flow:Flow
 
     def assertValid():Unit = {
       // println("Asserting for " + this.getClass)
       edges.foreach(e => if (e.hasFiniteCapacity) assert(e.flow <= e.capacity))
     }
+
+
   }
 
-  case class Network(nodes:IndexedSeq[Node], edges:Seq[UndEdge]) extends FlowNetwork {
+  case class Network(nodes:IndexedSeq[Node], edges:Seq[UndEdge], flow:Flow = Flow())
+             extends FlowNetwork with UndGraph {
 
-    def toResidual:Residual = Residual(nodes, edges)
+    def toResidual:Residual = Residual(this)
 
-
-
-    def increaseFlow(edgeId:Int, delta:Int):Network = {
-      val e = edge(edgeId)
-      val newEdge = e.asInstanceOf[UndEdge].copy(flow = e.flow + delta)
-      if (newEdge.capacity >= 0 && newEdge.flow > newEdge.capacity) {
-        throw new RuntimeException(s"Edge ${edgeId} flow is ${newEdge.flow} but " +
-          s"capacity is only ${newEdge.capacity}")
-      }
-      copy(edges = edges.updated(edgeId, newEdge))
+    def edge(aid:Int, bid:Int):Option[UndEdge] = {
+      assert (aid != bid)
+      println(aid, bid)
+      edges.find(e => e.from == aid && e.to == bid || e.to == aid && e.from == bid)
     }
 
-    def decreaseFlow(edgeId:Int, delta:Int):Network =
-      increaseFlow(edgeId, delta  * -1)
+    def hasEdge(aid:Int, bid:Int) = !edge(aid, bid).isEmpty
+
+    def flow(aid:Int, bid:Int):Int = flow.value(aid, bid)
+
+    def increaseFlow(aid:Int, bid:Int, value:Int):Network = {
+      val newflow = flow.updated(aid, bid, value)
+      copy(flow = newflow)
+
+    }
+
+    def toGraphViz(gt:String = "graph"):String = {
+      def e2s(e:Edge):String = e match {
+        case UndEdge(id, from, to, cap, _) => {
+          val flowf:Int = this.flow(from,to)
+          val flowb:Int = this.flow(to,from)
+          assert (flowf + flowb == 0)
+
+          val color =
+            if (flowf != 0)
+              "green"
+            else "black"
+          val flowStyle =
+            if (flowf > 0) {
+              """,arrowhead="halfopen",arrowtail="none",dir="both""""
+            } else if (flowf < 0) {
+              """,arrowtail="halfopen",arrowhead="none",dir="both""""
+            } else ""
+
+          s"""$from -- $to [label="${Math.abs(flowf)}/$cap", color=$color, len=3 $flowStyle]"""
+        }
+      }
+      val nodesStr = nodes.map(n => n.id + " [label=\"" + n.label + "\"]").mkString("\n")
+      val edgesStr = edges
+        .map(e2s(_))
+        .mkString("\n")
+
+      s"""$gt Network {
+        rankdir=LR
+        ${nodesStr}
+        ${edgesStr}}
+      """
+    }
+
 
   }
 
-  case class Residual(nodes:IndexedSeq[Node], forwards:Seq[UndEdge]) extends FlowNetwork {
+  case class Residual(nw:Network) extends FlowNetwork with Graph {
 
-    lazy val backwards:Seq[BEdge] =
-      forwards.filter(e => e.flow > 0).map(e => BEdge(e))
+    lazy val edges = nw.edges.flatMap(e => {
+      val cap = e.capacity
+      val cap2 = if (cap < 0) Integer.MAX_VALUE else cap
+      val e1 = DirEdge(0, e.from, e.to, cap2 - nw.flow(e.from, e.to))
+      val e2 = DirEdge(0, e.to, e.from, cap2 - nw.flow(e.to, e.from))
+      // assert(e1.capacity >= 0)
+      // assert(e2.capacity >= 0)
+      List(e1,e2).filter(_.capacity > 0)
+    })
 
-    lazy val edges = forwards.filter(e => e.hasMoreCapacity) ++ backwards
+    val nodes = nw.nodes
+    val flow = nw.flow
 
     def augment(path:Path, nw:Network):Network = {
       val b = bottleneck(path)
-      path.foldLeft (nw) ((acc, e) => e match {
-        case UndEdge(id, from, to, cap, flow) => acc.increaseFlow(id, b)
-        case BEdge(e2) => acc.decreaseFlow(e2.id, b)
+      println("augment: " + path2string(path, nw) + " with " + b)
+      val r = path.foldLeft (nw) ((acc, e) => e match {
+        case DirEdge(id, from, to, cap) => acc.increaseFlow(from, to, b)
+        case _ => throw new RuntimeException("Only directed edges on path allowed")
       })
+
+      for (u <- r.nodes/*; v <- nodes if u.id != v.id && hasEdge(u.id,v.id)*/) {
+
+        val flowOut = r.flow.flowOut(u.id)
+        val flowIn  = r.flow.flowIn(u.id)
+
+        // val flowIn  = edgesTo(u.id).map(e => flow(e.from, e.to))
+        println(s"${u.id} in: $flowIn, out: $flowOut")
+      }
+
+      r
+
+    }
+
+    def toGraphViz(gt:String = "digraph"):String = {
+      def e2s(e:Edge):String = e match {
+        case e@DirEdge(id, from, to, cap) => {
+          s"""$from -> $to [label="$cap", len=3]"""
+        }
+      }
+      val nodesStr = nodes.map(n => n.id + " [label=\"" + n.label + "\"]").mkString("\n")
+      val edgesStr = edges
+        .map(e2s(_))
+        .mkString("\n")
+
+      s"""$gt Network {
+        rankdir=LR
+        ${nodesStr}
+        ${edgesStr}}
+      """
     }
   }
 
@@ -284,9 +388,9 @@ object Main {
     val flow:Int
     val isUndirected:Boolean
     val isBackwards:Boolean = !isUndirected
-    val asDirected:Seq[Edge]
+    val asDirected:Seq[DirEdge]
 
-    assert(capacity >= -1)
+    // assert(capacity >= -1)
 
     def reverse:Edge
 
@@ -303,13 +407,20 @@ object Main {
   // Undirected Edge
   case class UndEdge(id:Int, from:Int, to:Int, capacity:Int, flow:Int = 0) extends Edge {
     val isUndirected = true
-    def reverse = copy(from = to, to = from)
+    def reverse = DirEdge(id, from = to, to = from, capacity = capacity)
     assert (capacity == -1 || flow <= capacity)
 
-    lazy val asDirected = List(this, reverse)
+    lazy val asDirected = List(DirEdge(id,from,to,capacity), reverse)
+  }
+  case class DirEdge(id:Int, from:Int, to:Int, capacity:Int) extends Edge {
+    def reverse = copy(from = to, to = from)
+    val isUndirected = false
+    lazy val asDirected = List(this)
+    val flow = 0
   }
 
-  case class BEdge(edge:UndEdge) extends Edge {
+
+  case class BEdge(edge:Edge) extends Edge {
     val id = edge.id * -1 // not really necessary
     val from = edge.to
     val to   = edge.from
@@ -320,7 +431,7 @@ object Main {
     val flow = 0
     val isUndirected = false
     def reverse = copy(edge.reverse)
-    lazy val asDirected = List(this)
+    lazy val asDirected = edge.asDirected.reverse
   }
 
   def parseNetwork(filepath:String):Option[Network] = {
