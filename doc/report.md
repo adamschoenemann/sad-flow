@@ -44,25 +44,18 @@ Let $n$ be the number of nodes in the graph and $m$ be the number of edges.
 Let $C = \sum_{e \text{ out of } s}c_e$. Since each iteration of the algorithm
 finds an augmented path that augments the value of the flow with at least $1$,
 the algorithm cannot run more iterations than $C$. The residual graph $G_f$ has
-at most $2m$ edges.
+at most $2m$ edges. The edges are stored in adjacency lists, so looking up the
+edges of nodes is a constant time operations. Augmenting paths are found using
+breadth-first search which is $O(m + n) = O(m)$ since $m ≥ n/2$. The capacities
+and flows are stored in hashmaps, so queries are constant time. `augment` takes
+$O(n)$ time as the path has at most $n-1$ edges. The Residual graph $G_f$ is just a
+wrapper over the graph $G$ that recomputes capacities (constant time) based on
+the original capacities and the flow (all $O(1)$).
+All in all, since there are $C$ iterations and each step takes $O(m)$ time, the
+total running time is $O(mC)$.
 
-We use a straighforward implemenation of Bellman–Quine’s flow algorithm
-as described in Bronstein, *Foundations of Algorithms*, chap. 6. We use
-Prim’s algorithm to find an augmenting path and also implement the neat
-trick of flow by recomputing the inverse of the antisnail every 2nd
-iteration.
+Implementation
+--------------
 
-The running time is $[\ldots]$.
-
-We have implemented each undirected edge in the input graph as a
-$[\ldots]$. In the corresponding residual graph, the edge is represented
-by a $[\ldots]$. Our datatype for edge is this:
-
-    class FlowEdge
-    {
-      Vertex from, to;
-      GUISwingComponentFactory bar;
-      Edge next, parent, foo;
-    }
 
 [^shroeder]: [Schroeder et al, 2004](http://www.inf.ufpr.br/pos/techreport/RT_DINF003_2004.pdf)
