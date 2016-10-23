@@ -4,8 +4,9 @@ import collection.immutable.Queue
 
 object Main {
 
-  import Simple._
+  import NetworkFlow._
 
+  // a simple network for testing the algorithm
   def testNetwork = {
     val nodes = "s,a,b,c,d,e,f,g,t".split(",")
         .zipWithIndex.map(t => FlowNode(t._2, t._1))

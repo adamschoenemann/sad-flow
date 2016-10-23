@@ -1,7 +1,7 @@
 
 import collection.immutable.Queue
 
-object Simple {
+object NetworkFlow {
 
   type Path = List[Int]
 
