@@ -93,7 +93,7 @@ object Simple {
     def addNeighbour(id:Int):FlowNode = copy(neighbours = (id :: neighbours).distinct)
   }
 
-  trait FlowNetwork {
+  trait FlowNetwork[+N <: Node] extends Graph[N] {
     val sourceId:Int
     val sinkId:Int
   }
@@ -102,7 +102,7 @@ object Simple {
   type Flow = Map[(Int,Int),Int]
 
   case class RailNetwork(nodes:IndexedSeq[FlowNode], capacities:Capacities = Map[(Int,Int),Int](), flow:Flow = Map[(Int,Int),Int]())
-             extends Graph[FlowNode] with FlowNetwork {
+             extends FlowNetwork[FlowNode] {
 
     def node(id:Int) = nodes(id)
 
@@ -141,7 +141,8 @@ object Simple {
       val flow3 = flow2.updated((idb, ida), -flow2((ida, idb))) // decrease flow in other dir
       copy(flow = flow3)
     }
-    def minSTCut:STCut[FlowNode, Residual] = {
+
+    def minSTCut:STCut[FlowNode] = {
       val reachable = this.toResidual.reachableFrom(this.sourceId)
       STCut(reachable, this.nodes.diff(reachable), this.toResidual)
     }
@@ -178,7 +179,7 @@ object Simple {
     }
   }
 
-  case class Residual(nw:RailNetwork) extends Graph[FlowNode] with FlowNetwork {
+  case class Residual(nw:RailNetwork) extends FlowNetwork[FlowNode] {
 
     def node(id:Int) = nw.nodes(id)
 
@@ -194,7 +195,7 @@ object Simple {
 
     def bottleneck(path:Path):Int = bottleneckpairs(path2pairs(path))
 
-    def bottleneckpairs(lst:List[(Int,Int)]):Int =
+    private def bottleneckpairs(lst:List[(Int,Int)]):Int =
       lst.map({ case (a,b) => capacity(a,b) }).filter(_ > 0).min
 
     def augment(path:Path, nw:RailNetwork):RailNetwork = {
@@ -206,7 +207,7 @@ object Simple {
     }
   }
 
-  case class STCut[+N <: Node, G <: Graph[N] with FlowNetwork](a:Seq[N], b:Seq[N], nw:G) {
+  case class STCut[+N <: Node](a:Seq[N], b:Seq[N], nw:FlowNetwork[N]) {
 
     trait Part
     case object A extends Part
